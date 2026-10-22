@@ -1,179 +1,202 @@
 /**
  * apps/api/src/routes/leads.ts
+ *
  * REST endpoints for Gold Loan Leads.
  *
- * POST /api/v1/leads          – submit a new lead
- * GET  /api/v1/leads          – list all leads (admin)
- * GET  /api/v1/leads/:id      – fetch single lead by applicationId or UUID
- * PATCH /api/v1/leads/:id/status – update lead status (admin)
+ * POST   /api/v1/leads           – submit a new lead
+ * GET    /api/v1/leads           – list all leads (admin)
+ * GET    /api/v1/leads/:id       – fetch by applicationId or UUID
+ * PATCH  /api/v1/leads/:id/status – status transition (admin)
+ *
+ * Uses:
+ *   - math.service.ts for exact integer-paise calculations
+ *   - validation.ts for shared Zod schemas (same as AI agent tools)
+ *   - error.middleware.ts for the strict error contract
+ *   - idempotency.middleware.ts for Idempotency-Key support (Bonus B1)
  */
 
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { prisma } from "../lib/prisma.js";
-import { createLeadSchema, updateLeadStatusSchema } from "../schemas/lead.js";
-import { appraise } from "../lib/gold.js";
+import {
+  createLeadSchema,
+  updateLeadStatusSchema,
+  VALID_TRANSITIONS,
+} from "../schemas/validation.js";
+import {
+  AppError,
+  zodToFieldErrors,
+  validationError,
+  notFound,
+  duplicateApplication,
+  conflictError,
+} from "../middleware/error.middleware.js";
+import { calculateAppraisal, getRateFromEnv } from "../services/math.service.js";
 import { generateApplicationId } from "../lib/applicationId.js";
+import { idempotencyMiddleware } from "../middleware/idempotency.middleware.js";
 
 export const leadsRouter = Router();
 
-// POST /api/v1/leads
-leadsRouter.post("/", async (req, res) => {
-  const body = createLeadSchema.parse(req.body);
-
-  // Idempotency: if key provided and already exists, return cached response
-  if (body.idempotencyKey) {
-    const existing = await prisma.idempotencyRecord.findUnique({
-      where: { key: body.idempotencyKey },
-    });
-    if (existing) {
-      return res.status(existing.statusCode).json(existing.responseBody);
-    }
+// Apply idempotency middleware to POST (lead submission)
+leadsRouter.post("/", idempotencyMiddleware(), async (req: Request, res: Response) => {
+  // ── 1. Validate input ──────────────────────────────────────────────────────
+  const parsed = createLeadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw validationError(zodToFieldErrors(parsed.error));
   }
+  const body = parsed.data;
 
-  // 7-day duplicate mobile check
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const recentDuplicate = await prisma.lead.findFirst({
+  // ── 2. 7-day duplicate mobile check ───────────────────────────────────────
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000);
+  const recent = await prisma.lead.findFirst({
     where: {
       mobileNumber: body.mobileNumber,
       createdAt: { gte: sevenDaysAgo },
     },
+    select: { applicationId: true, createdAt: true },
   });
-  if (recentDuplicate) {
-    return res.status(409).json({
-      success: false,
-      error: "A lead with this mobile number was submitted within the last 7 days.",
-      existingApplicationId: recentDuplicate.applicationId,
-    });
+  if (recent) {
+    throw duplicateApplication(recent.applicationId, recent.createdAt);
   }
 
-  // Verify plan exists and is active
+  // ── 3. Resolve and validate plan ──────────────────────────────────────────
   const plan = await prisma.loanScheme.findFirst({
     where: { id: body.planId, isActive: true },
   });
   if (!plan) {
-    return res.status(422).json({ success: false, error: "Plan not found or inactive." });
+    throw new AppError("NOT_FOUND", `Loan plan "${body.planId}" not found or inactive.`);
   }
 
-  // Gold appraisal calculations
-  const appraisal = appraise({
-    grossWeightGrams: body.grossWeightGrams,
+  // ── 4. Gold appraisal — exact integer paise arithmetic ────────────────────
+  const rate = getRateFromEnv();
+  const appraisal = calculateAppraisal({
     netWeightGrams: body.netWeightGrams,
     karat: body.karat,
     maxLtvPercent: Number(plan.maxLtvPercent),
+    rate24kPerGram: rate,
   });
 
+  // ── 5. Generate human-friendly ID ─────────────────────────────────────────
   const applicationId = await generateApplicationId();
 
-  const lead = await prisma.lead.create({
-    data: {
-      applicationId,
-      fullName: body.fullName,
-      mobileNumber: body.mobileNumber,
-      grossWeightGrams: body.grossWeightGrams,
-      netWeightGrams: body.netWeightGrams,
-      karat: body.karat,
-      pureGoldGrams: appraisal.pureGoldGrams,
-      rate24kPaise: appraisal.rate24kPaise,
-      goldValuePaise: appraisal.goldValuePaise,
-      eligibleLoanPaise: appraisal.eligibleLoanPaise,
-      planId: body.planId,
-      source: body.source ?? "WEB_FORM",
-      idempotencyKey: body.idempotencyKey,
-    },
-    include: { plan: true },
-  });
-
-  // Create initial audit log
-  await prisma.auditLog.create({
-    data: {
-      leadId: lead.id,
-      fromStatus: null,
-      toStatus: "SUBMITTED",
-      actor: lead.source === "AI_AGENT" ? "AI_AGENT" : "SYSTEM",
-      note: `Application submitted via ${lead.source === "AI_AGENT" ? "AI agent" : "web form"}`,
-    },
-  });
-
-  const responseBody = {
-    success: true,
-    data: serialiseLead(lead),
-  };
-
-  // Store idempotency record
-  if (body.idempotencyKey) {
-    await prisma.idempotencyRecord.create({
+  // ── 6. Persist lead + initial audit log in a transaction ──────────────────
+  const lead = await prisma.$transaction(async (tx) => {
+    const created = await tx.lead.create({
       data: {
-        key: body.idempotencyKey,
-        requestHash: "",
-        statusCode: 201,
-        responseBody,
+        applicationId,
+        fullName: body.fullName.trim(),
+        mobileNumber: body.mobileNumber,
+        grossWeightGrams: body.grossWeightGrams,
+        netWeightGrams: body.netWeightGrams,
+        karat: body.karat,
+        pureGoldGrams: appraisal.pureGoldGrams,
+        rate24kPaise: appraisal.rate24kPaise,
+        goldValuePaise: appraisal.goldValuePaise,
+        eligibleLoanPaise: appraisal.eligibleLoanPaise,
+        planId: body.planId,
+        source: body.source,
+        idempotencyKey:
+          (req.headers["idempotency-key"] as string | undefined) ??
+          body.idempotencyKey,
+      },
+      include: { plan: true },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        leadId: created.id,
+        fromStatus: null,
+        toStatus: "SUBMITTED",
+        actor: created.source === "AI_AGENT" ? "AI_AGENT" : "SYSTEM",
+        note: `Application submitted via ${
+          created.source === "AI_AGENT" ? "AI agent" : "web form"
+        }`,
       },
     });
-  }
 
-  return res.status(201).json(responseBody);
+    return created;
+  });
+
+  return res.status(201).json({ success: true, data: serialise(lead) });
 });
 
-// GET /api/v1/leads
-leadsRouter.get("/", async (_req, res) => {
+// ── GET /api/v1/leads ─────────────────────────────────────────────────────────
+
+leadsRouter.get("/", async (_req: Request, res: Response) => {
   const leads = await prisma.lead.findMany({
     include: { plan: true },
     orderBy: { createdAt: "desc" },
   });
-  return res.json({ success: true, data: leads.map(serialiseLead) });
+  return res.json({ success: true, data: leads.map(serialise) });
 });
 
-// GET /api/v1/leads/:id
-leadsRouter.get("/:id", async (req, res) => {
-  const { id } = req.params;
+// ── GET /api/v1/leads/:id ─────────────────────────────────────────────────────
+
+leadsRouter.get("/:id", async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
   const lead = await prisma.lead.findFirst({
     where: { OR: [{ id }, { applicationId: id }] },
-    include: { plan: true, auditLogs: { orderBy: { createdAt: "asc" } } },
-  });
-  if (!lead) {
-    return res.status(404).json({ success: false, error: "Lead not found." });
-  }
-  return res.json({ success: true, data: serialiseLead(lead) });
-});
-
-// PATCH /api/v1/leads/:id/status
-leadsRouter.patch("/:id/status", async (req, res) => {
-  const { id } = req.params;
-  const body = updateLeadStatusSchema.parse(req.body);
-
-  const lead = await prisma.lead.findFirst({
-    where: { OR: [{ id }, { applicationId: id }] },
-  });
-  if (!lead) {
-    return res.status(404).json({ success: false, error: "Lead not found." });
-  }
-
-  const updated = await prisma.lead.update({
-    where: { id: lead.id },
-    data: { status: body.status },
-    include: { plan: true },
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      leadId: lead.id,
-      fromStatus: lead.status,
-      toStatus: body.status,
-      actor: body.actor ?? "ADMIN",
-      note: body.note ?? `Status changed to ${body.status}`,
+    include: {
+      plan: true,
+      auditLogs: { orderBy: { createdAt: "asc" } },
     },
   });
-
-  return res.json({ success: true, data: serialiseLead(updated) });
+  if (!lead) throw notFound("Lead", id);
+  return res.json({ success: true, data: serialise(lead) });
 });
 
-// ---------------------------------------------------------------------------
-// Serialiser – converts BigInt fields to strings for JSON transport
-// ---------------------------------------------------------------------------
+// ── PATCH /api/v1/leads/:id/status ───────────────────────────────────────────
 
-function serialiseLead(lead: Record<string, unknown>): unknown {
+leadsRouter.patch("/:id/status", async (req: Request, res: Response) => {
+  const { id } = req.params as { id: string };
+
+  const parsed = updateLeadStatusSchema.safeParse(req.body);
+  if (!parsed.success) {
+    throw validationError(zodToFieldErrors(parsed.error));
+  }
+  const { status, actor, note } = parsed.data;
+
+  const lead = await prisma.lead.findFirst({
+    where: { OR: [{ id }, { applicationId: id }] },
+  });
+  if (!lead) throw notFound("Lead", id);
+
+  // Enforce status workflow
+  const allowed = VALID_TRANSITIONS[lead.status] ?? [];
+  if (!allowed.includes(status)) {
+    throw conflictError(
+      `Cannot transition from ${lead.status} to ${status}. Allowed: [${
+        allowed.join(", ") || "none — terminal state"
+      }].`
+    );
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const u = await tx.lead.update({
+      where: { id: lead.id },
+      data: { status },
+      include: { plan: true },
+    });
+    await tx.auditLog.create({
+      data: {
+        leadId: lead.id,
+        fromStatus: lead.status,
+        toStatus: status,
+        actor: actor ?? "ADMIN",
+        note: note ?? `Status changed from ${lead.status} to ${status}`,
+      },
+    });
+    return u;
+  });
+
+  return res.json({ success: true, data: serialise(updated) });
+});
+
+// ── Serialiser ────────────────────────────────────────────────────────────────
+
+/** Convert BigInt fields to strings for JSON transport. */
+function serialise(obj: unknown): unknown {
   return JSON.parse(
-    JSON.stringify(lead, (_key, value) =>
+    JSON.stringify(obj, (_key, value) =>
       typeof value === "bigint" ? value.toString() : value
     )
   );

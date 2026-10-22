@@ -1,14 +1,14 @@
 /**
  * apps/api/src/test/setup.ts
- * Global Vitest setup – runs before every test file.
+ * Global Vitest setup — runs before every test file.
+ *
+ * Only sets env variables. Does NOT import any module that touches
+ * the database, Prisma client, or network.
  */
 
-import { config } from "dotenv";
-
-// Load test env variables (falls back to .env.example defaults if no .env present)
-config({ path: ".env.example" });
-
-// Ensure a mock-safe gold rate is always present in tests
-if (!process.env["GOLD_RATE_24K_PAISE"]) {
-  process.env["GOLD_RATE_24K_PAISE"] = "700000";
-}
+// Set required env vars for tests that don't need a real DB
+process.env["NODE_ENV"] = "test";
+process.env["GOLD_RATE_24K_PAISE"] ??= "700000";
+process.env["DATABASE_URL"] ??=
+  "postgresql://postgres:postgres@localhost:5432/tglobal_gold_loan?schema=public";
+process.env["PORT"] ??= "4000";

@@ -7,9 +7,11 @@ import { Router } from "express";
 import { leadsRouter } from "./leads.js";
 import { schemesRouter } from "./schemes.js";
 import { agentRouter } from "./agent.js";
+import { goldRateRouter } from "./goldRate.js";
 
 export const router = Router();
 
 router.use("/leads", leadsRouter);
 router.use("/schemes", schemesRouter);
 router.use("/agent", agentRouter);
+router.use("/gold-rate", goldRateRouter);
