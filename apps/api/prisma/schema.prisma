@@ -1,0 +1,140 @@
+// =============================================================================
+// TGlobal Gold Loan – Prisma Schema
+//
+// Monetary convention:
+//   ALL monetary values are stored as INTEGER PAISE (1/100 of a rupee).
+//   BigInt  → values that can exceed Int range (gold/loan amounts in paise)
+//   Decimal → percentage / weight values where exact decimal precision matters
+//   NEVER use Float for money.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum LeadStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum LeadSource {
+  WEB_FORM
+  AI_AGENT
+}
+
+// ---------------------------------------------------------------------------
+// LoanScheme – master table of available gold-loan products
+// ---------------------------------------------------------------------------
+model LoanScheme {
+  /// Stable business identifier, e.g. "PLAN_BULLET_01", "PLAN_EMI_01"
+  id               String   @id
+  name             String
+  /// Annual interest rate in percent, e.g. 12.0, 10.5
+  interestRatePa   Decimal  @db.Decimal(5, 2)
+  /// Maximum loan-to-value ratio in percent; never exceeds 75%
+  maxLtvPercent    Decimal  @db.Decimal(5, 2)
+  /// Loan tenure in calendar months
+  tenureMonths     Int
+  description      String
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  leads            Lead[]
+
+  @@map("loan_schemes")
+}
+
+// ---------------------------------------------------------------------------
+// Lead – one application per customer enquiry
+// ---------------------------------------------------------------------------
+model Lead {
+  /// Internal UUID primary key
+  id                 String     @id @default(uuid())
+  /// Human-friendly application reference, e.g. "GL-1042"
+  applicationId      String     @unique
+  fullName           String
+  /// Indexed so the 7-day duplicate-mobile check is fast
+  mobileNumber       String
+
+  // Gold appraisal ─────────────────────────────────────────────────────────
+  /// Total (gross) weight of the article in grams
+  grossWeightGrams   Decimal    @db.Decimal(10, 3)
+  /// Net gold weight after deducting stone/impurity
+  netWeightGrams     Decimal    @db.Decimal(10, 3)
+  /// Gold purity: 18, 22, or 24
+  karat              Int
+  /// Calculated pure-gold equivalent weight (netWeight × karat / 24)
+  pureGoldGrams      Decimal    @db.Decimal(10, 4)
+
+  // Monetary fields (ALL in integer paise) ──────────────────────────────────
+  /// 24 k spot rate used at appraisal time, in paise per gram
+  rate24kPaise       BigInt
+  /// Total gold value = pureGoldGrams × rate24kPaise  (in paise)
+  goldValuePaise     BigInt
+  /// Sanctioned loan ceiling = goldValue × maxLtvPercent / 100  (in paise)
+  eligibleLoanPaise  BigInt
+
+  // Plan linkage ────────────────────────────────────────────────────────────
+  planId             String
+  plan               LoanScheme @relation(fields: [planId], references: [id])
+
+  // Workflow ────────────────────────────────────────────────────────────────
+  status             LeadStatus @default(SUBMITTED)
+  source             LeadSource @default(WEB_FORM)
+
+  /// Client-supplied idempotency token (optional, unique when present)
+  idempotencyKey     String?    @unique
+
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  auditLogs          AuditLog[]
+
+  @@index([mobileNumber])
+  @@map("leads")
+}
+
+// ---------------------------------------------------------------------------
+// AuditLog – immutable record of every status transition (Bonus B1)
+// ---------------------------------------------------------------------------
+model AuditLog {
+  id         String   @id @default(uuid())
+  leadId     String
+  lead       Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  /// Who triggered the transition: "SYSTEM", "ADMIN", "AI_AGENT", etc.
+  actor      String
+  note       String
+  createdAt  DateTime @default(now())
+
+  @@index([leadId])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// IdempotencyRecord – stores cached API responses for duplicate requests (Bonus B1)
+// ---------------------------------------------------------------------------
+model IdempotencyRecord {
+  /// The client-supplied idempotency key
+  key          String   @id
+  /// SHA-256 hash of the full request body to detect body mismatch
+  requestHash  String
+  statusCode   Int
+  /// Full serialised response body stored as JSON
+  responseBody Json
+  createdAt    DateTime @default(now())
+
+  @@map("idempotency_records")
+}
