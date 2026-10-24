@@ -57,8 +57,12 @@ export interface MathResult {
   rate24kPaise: bigint;
   /** Total gold value in paise (exact integer). */
   goldValuePaise: bigint;
+  /** Gold value floored to whole rupees, per the public quote contract. */
+  goldValue: number;
   /** Eligible loan in paise, floored to whole rupees × 100. */
   eligibleLoanPaise: bigint;
+  /** Eligible amount floored to whole rupees. */
+  eligibleLoan: number;
   /** Effective LTV actually applied (after RBI cap), as a percentage integer. */
   effectiveLtvPercent: number;
 }
@@ -85,37 +89,33 @@ export function calculateAppraisal(input: MathInput): MathResult {
   }
 
   // ── RBI LTV cap ──────────────────────────────────────────────────────────
-  // Clamp to 75% hard ceiling regardless of plan config.
-  const rawLtv = BigInt(Math.round(Math.min(maxLtvPercent, 75) * 100)); // stored as hundredths of %
-  const effectiveLtvHundredths = rawLtv > RBI_MAX_LTV * 100n ? RBI_MAX_LTV * 100n : rawLtv;
-  const effectiveLtvPercent = Number(effectiveLtvHundredths) / 100;
+  // Keep the plan percentage as an exact decimal ratio, then cap at 75%.
+  const planLtv = decimalRatio(Math.max(0, maxLtvPercent));
+  const isAboveCap = planLtv.numerator > RBI_MAX_LTV * planLtv.denominator;
+  const ltvNumerator = isAboveCap ? RBI_MAX_LTV : planLtv.numerator;
+  const ltvDenominator = isAboveCap ? 1n : planLtv.denominator;
+  const effectiveLtvPercent = Number(ltvNumerator) / Number(ltvDenominator);
 
   // ── Rate: rupees per gram → paise per gram ───────────────────────────────
   // Multiply by 100 to convert ₹/g to paise/g
   const rate24kPaise = BigInt(Math.round(rate24kPerGram * 100));
 
-  // ── pureGoldGrams in scaled integer form ─────────────────────────────────
-  // pureGoldGrams = netWeightGrams × karat / 24
-  //
-  // Exact integer path:
-  //   netScaled = round(netWeightGrams × GRAM_SCALE)   [integer, 0.0001g resolution]
-  //   pureScaled = netScaled × karat / 24              [BigInt integer division]
-  //
-  // For 45g 22k:  netScaled = 450000, pureScaled = 450000×22/24 = 412500
-  //   → "41.2500"  ✓
-  const netScaled = BigInt(Math.round(netWeightGrams * Number(GRAM_SCALE)));
-  const pureScaled = (netScaled * BigInt(karat)) / 24n;
+  // ── Exact rational weight and purity ──────────────────────────────────────
+  // Keep the input decimal as a rational and divide by 24 only after applying
+  // karat. Formatting is 4 d.p.; monetary calculations retain the full ratio.
+  const weight = decimalRatio(netWeightGrams);
+  const pureScaled = (weight.numerator * BigInt(karat) * GRAM_SCALE) /
+    (weight.denominator * 24n);
   const pureGoldGrams = formatGrams(pureScaled, GRAM_SCALE);
 
   // ── goldValuePaise ────────────────────────────────────────────────────────
-  // goldValuePaise = pureScaled × rate24kPaise / GRAM_SCALE
-  //
-  // For 45g 22k @ ₹7000/g:
-  //   = 412500 × 700000 / 10000 = 28,875,000 paise = ₹288,750  ✓
-  const goldValuePaise = (pureScaled * rate24kPaise) / GRAM_SCALE;
+  // Apply the exact net-weight × karat / 24 ratio before flooring to paise.
+  const goldValuePaise =
+    (weight.numerator * BigInt(karat) * rate24kPaise) /
+    (weight.denominator * 24n);
 
   // ── eligibleLoanPaise ─────────────────────────────────────────────────────
-  // eligibleLoanPaise = goldValuePaise × effectiveLtvHundredths / 10000
+  // eligibleLoanPaise = goldValuePaise × plan LTV / 100
   // Then floor to whole-rupee boundary (floor to nearest 100 paise).
   //
   // For 45g 22k @ 75% LTV:
@@ -126,7 +126,7 @@ export function calculateAppraisal(input: MathInput): MathResult {
   //   = 28,875,000 × 7000 / 10000 = 20,212,500 paise = ₹202,125.00
   //   floored → 20,212,500 paise = ₹202,125  ✓
   const rawEligiblePaise =
-    (goldValuePaise * effectiveLtvHundredths) / 10_000n;
+    (goldValuePaise * ltvNumerator) / (ltvDenominator * 100n);
   // Floor to whole rupee (nearest 100 paise below)
   const eligibleLoanPaise = (rawEligiblePaise / 100n) * 100n;
 
@@ -134,7 +134,9 @@ export function calculateAppraisal(input: MathInput): MathResult {
     pureGoldGrams,
     rate24kPaise,
     goldValuePaise,
+    goldValue: Number(goldValuePaise / 100n),
     eligibleLoanPaise,
+    eligibleLoan: Number(eligibleLoanPaise / 100n),
     effectiveLtvPercent,
   };
 }
@@ -163,6 +165,20 @@ function formatGrams(scaled: bigint, scale: bigint): string {
   const frac = scaled % scale;
   const dp = scale.toString().length - 1; // GRAM_SCALE 10000 → 4 d.p.
   return `${whole}.${frac.toString().padStart(dp, "0")}`;
+}
+
+/** Convert a finite JS decimal to an exact numerator/denominator pair. */
+function decimalRatio(value: number): { numerator: bigint; denominator: bigint } {
+  const text = value.toString().toLowerCase();
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/.exec(text);
+  if (!match) throw new RangeError(`Invalid decimal value: ${value}`);
+  const sign = match[1] === "-" ? -1n : 1n;
+  const fraction = match[3] ?? "";
+  const exponent = Number(match[4] ?? 0);
+  const digits = BigInt(`${match[2]}${fraction}`) * sign;
+  const places = fraction.length - exponent;
+  if (places <= 0) return { numerator: digits * 10n ** BigInt(-places), denominator: 1n };
+  return { numerator: digits, denominator: 10n ** BigInt(places) };
 }
 
 /** Convert paise BigInt to rupees string for display (e.g. "216562"). */

@@ -5,7 +5,7 @@
  *
  * {
  *   "error": {
- *     "code": "VALIDATION_ERROR | NOT_FOUND | DUPLICATE_APPLICATION | CONFLICT | INTERNAL_ERROR",
+ *     "code": "VALIDATION_ERROR | NOT_FOUND | DUPLICATE_APPLICATION | INTERNAL_ERROR",
  *     "message": "Human-readable summary",
  *     "fields": [           // present on VALIDATION_ERROR only
  *       { "field": "netWeightGrams", "message": "Net weight cannot exceed gross weight" }
@@ -28,14 +28,12 @@ export type ErrorCode =
   | "VALIDATION_ERROR"
   | "NOT_FOUND"
   | "DUPLICATE_APPLICATION"
-  | "CONFLICT"
   | "INTERNAL_ERROR";
 
 const HTTP_STATUS: Record<ErrorCode, number> = {
-  VALIDATION_ERROR: 422,
+  VALIDATION_ERROR: 400,
   NOT_FOUND: 404,
   DUPLICATE_APPLICATION: 409,
-  CONFLICT: 409,
   INTERNAL_ERROR: 500,
 };
 
@@ -92,7 +90,7 @@ export class AppError extends Error {
 
 // ── Response shape (for TypeScript consumers) ─────────────────────────────────
 
-interface ErrorBody {
+export interface ErrorBody {
   code: ErrorCode;
   message: string;
   fields?: FieldError[];
@@ -130,10 +128,6 @@ export function validationError(fields: FieldError[]): AppError {
     "Request validation failed. See 'fields' for details.",
     { fields }
   );
-}
-
-export function conflictError(message: string): AppError {
-  return new AppError("CONFLICT", message);
 }
 
 // ── Zod error → FieldError[] converter ───────────────────────────────────────
@@ -179,10 +173,10 @@ export function errorHandler(
   ) {
     const meta = (err as { meta?: { target?: string[] } }).meta;
     const field = meta?.target?.join(", ") ?? "field";
-    const appErr = new AppError(
-      "CONFLICT",
-      `Unique constraint violation on ${field}.`
-    );
+    const appErr = validationError([{
+      field,
+      message: `Unique constraint violation on ${field}.`,
+    }]);
     res.status(appErr.statusCode).json(appErr.toResponse());
     return;
   }

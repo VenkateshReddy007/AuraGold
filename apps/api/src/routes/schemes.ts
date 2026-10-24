@@ -1,28 +1,25 @@
-/**
- * apps/api/src/routes/schemes.ts
- * GET /api/v1/schemes  – list all active loan schemes
- * GET /api/v1/schemes/:id
- */
-
-import { Router } from "express";
-import { prisma } from "../lib/prisma.js";
+import { Router, type Request, type Response, type NextFunction } from "express";
+import { getActiveScheme, listActiveSchemes } from "../services/scheme.service.js";
+import { notFound } from "../middleware/error.middleware.js";
 
 export const schemesRouter = Router();
 
-schemesRouter.get("/", async (_req, res) => {
-  const schemes = await prisma.loanScheme.findMany({
-    where: { isActive: true },
-    orderBy: { id: "asc" },
-  });
-  return res.json({ success: true, data: schemes });
+schemesRouter.get("/", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const schemes = await listActiveSchemes();
+    return res.json({ success: true, data: schemes });
+  } catch (err) {
+    return next(err);
+  }
 });
 
-schemesRouter.get("/:id", async (req, res) => {
-  const scheme = await prisma.loanScheme.findUnique({
-    where: { id: req.params["id"] },
-  });
-  if (!scheme) {
-    return res.status(404).json({ success: false, error: "Scheme not found." });
+schemesRouter.get("/:id", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const id = req.params["id"];
+    if (typeof id !== "string") return next(notFound("Scheme", ""));
+    const scheme = await getActiveScheme(id);
+    return res.json({ success: true, data: scheme });
+  } catch (err) {
+    return next(err);
   }
-  return res.json({ success: true, data: scheme });
 });

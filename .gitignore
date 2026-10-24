@@ -13,8 +13,7 @@ build/
 .env.local
 .env.*.local
 
-# Prisma
-apps/api/prisma/migrations/
+# Prisma migrations are part of the deployable schema and must be committed.
 
 # Logs
 *.log
@@ -29,3 +28,5 @@ npm-debug.log*
 
 # Test coverage
 coverage/
+apps/api/test-out.json
+apps/api/test-results.json

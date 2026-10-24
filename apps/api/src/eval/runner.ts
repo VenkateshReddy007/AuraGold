@@ -33,7 +33,7 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "EVAL_001",
     description: "list_schemes returns at least 2 active plans",
-    tool: "list_schemes",
+    tool: "get_loan_schemes",
     input: {},
     assert: (result) => {
       const r = result as { success: boolean; data: unknown[] };
@@ -46,53 +46,51 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "EVAL_002",
     description: "calculate_loan: 45g 22K PLAN_EMI_01 → eligibleLoan ₹216,562",
-    tool: "calculate_loan",
-    input: { netWeightGrams: 45, karat: 22, planId: "PLAN_EMI_01" },
+    tool: "calculate_quote",
+    input: { grossWeightGrams: 45, netWeightGrams: 45, karat: 22, planId: "PLAN_EMI_01" },
     assert: (result) => {
-      const r = result as { success: boolean; data: { eligibleLoanRupees: number } };
+      const r = result as { success: boolean; data: Array<{ eligibleLoan: number }> };
       if (!r.success) return "success was false";
-      if (r.data.eligibleLoanRupees !== 216_562)
-        return `expected 216562, got ${r.data.eligibleLoanRupees}`;
+      if (r.data[0]?.eligibleLoan !== 216_562)
+        return `expected 216562, got ${r.data[0]?.eligibleLoan}`;
       return null;
     },
   },
   {
     id: "EVAL_003",
     description: "calculate_loan: 45g 22K PLAN_BULLET_01 → eligibleLoan ₹202,125",
-    tool: "calculate_loan",
-    input: { netWeightGrams: 45, karat: 22, planId: "PLAN_BULLET_01" },
+    tool: "calculate_quote",
+    input: { grossWeightGrams: 45, netWeightGrams: 45, karat: 22, planId: "PLAN_BULLET_01" },
     assert: (result) => {
-      const r = result as { success: boolean; data: { eligibleLoanRupees: number } };
+      const r = result as { success: boolean; data: Array<{ eligibleLoan: number }> };
       if (!r.success) return "success was false";
-      if (r.data.eligibleLoanRupees !== 202_125)
-        return `expected 202125, got ${r.data.eligibleLoanRupees}`;
+      if (r.data[0]?.eligibleLoan !== 202_125)
+        return `expected 202125, got ${r.data[0]?.eligibleLoan}`;
       return null;
     },
   },
   {
     id: "EVAL_004",
     description: "calculate_loan: 10g 18K PLAN_EMI_01 → eligibleLoan ₹39,375",
-    tool: "calculate_loan",
-    input: { netWeightGrams: 10, karat: 18, planId: "PLAN_EMI_01" },
+    tool: "calculate_quote",
+    input: { grossWeightGrams: 10, netWeightGrams: 10, karat: 18, planId: "PLAN_EMI_01" },
     assert: (result) => {
-      const r = result as { success: boolean; data: { eligibleLoanRupees: number } };
+      const r = result as { success: boolean; data: Array<{ eligibleLoan: number }> };
       if (!r.success) return "success was false";
-      if (r.data.eligibleLoanRupees !== 39_375)
-        return `expected 39375, got ${r.data.eligibleLoanRupees}`;
+      if (r.data[0]?.eligibleLoan !== 39_375)
+        return `expected 39375, got ${r.data[0]?.eligibleLoan}`;
       return null;
     },
   },
   {
     id: "EVAL_005",
-    description: "get_lead_status returns data for seeded lead GL-1001",
-    tool: "get_lead_status",
-    input: { applicationId: "GL-1001" },
+    description: "check_existing_application ignores historical seeded lead outside 7 days",
+    tool: "check_existing_application",
+    input: { mobileNumber: "9876540001" },
     assert: (result) => {
-      const r = result as { success: boolean; data: { applicationId: string; status: string } };
+      const r = result as { success: boolean; data: { exists: boolean; applicationId: string } };
       if (!r.success) return "success was false";
-      if (r.data.applicationId !== "GL-1001") return "applicationId mismatch";
-      if (!["SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED"].includes(r.data.status))
-        return `invalid status: ${r.data.status}`;
+      if (r.data.exists) return `unexpected recent application ${r.data.applicationId}`;
       return null;
     },
   },
@@ -107,10 +105,10 @@ const EVAL_CASES: EvalCase[] = [
       netWeightGrams: 15, // intentionally invalid
       karat: 22,
       planId: "PLAN_EMI_01",
+      userConfirmed: false,
     },
     assert: (result) => {
-      // Should have thrown — executeTool throws AppError on validation failure
-      // The eval runner catches it and checks the error code
+      // Invalid tool input is returned as a structured error object.
       const r = result as { threwAppError: boolean; code: string };
       if (!r.threwAppError) return "expected AppError to be thrown";
       if (r.code !== "VALIDATION_ERROR") return `expected VALIDATION_ERROR, got ${r.code}`;
@@ -120,15 +118,15 @@ const EVAL_CASES: EvalCase[] = [
   {
     id: "EVAL_007",
     description: "calculate_loan enforces RBI cap: 80% LTV → effectiveLtv 75%",
-    tool: "calculate_loan",
+    tool: "calculate_quote",
     // Note: this requires a plan with maxLtvPercent > 75 to be in the DB.
     // For this eval we test via math service directly.
-    input: { netWeightGrams: 10, karat: 24, planId: "PLAN_EMI_01" },
+    input: { grossWeightGrams: 10, netWeightGrams: 10, karat: 24, planId: "PLAN_EMI_01" },
     assert: (result) => {
-      const r = result as { success: boolean; data: { effectiveLtvPercent: number } };
+      const r = result as { success: boolean; data: Array<{ effectiveLtvPercent: number }> };
       if (!r.success) return "success was false";
-      if (r.data.effectiveLtvPercent > 75)
-        return `LTV ${r.data.effectiveLtvPercent} exceeds 75% RBI cap`;
+      if ((r.data[0]?.effectiveLtvPercent ?? 100) > 75)
+        return `LTV ${r.data[0]?.effectiveLtvPercent} exceeds 75% RBI cap`;
       return null;
     },
   },
@@ -140,7 +138,7 @@ async function runEval() {
   console.log("🧪  TGlobal Gold Loan – AI Agent Evaluation Suite\n");
 
   // Lazy-import to avoid loading Prisma in environments without a DB
-  const { executeTool } = await import("../routes/agent.js");
+  const { executeAgentTool } = await import("../agent/tools.js");
 
   let passed = 0;
   let failed = 0;
@@ -151,7 +149,11 @@ async function runEval() {
     let errorCode = "";
 
     try {
-      result = await executeTool(evalCase.tool, evalCase.input);
+      result = await executeAgentTool(evalCase.tool, evalCase.input, { sessionId: "eval" });
+      if (evalCase.id === "EVAL_006") {
+        const structured = result as { success: boolean; error?: { code: string } };
+        result = structured.success ? { threwAppError: false } : { threwAppError: true, code: structured.error?.code };
+      }
     } catch (err: unknown) {
       if (
         err instanceof Error &&

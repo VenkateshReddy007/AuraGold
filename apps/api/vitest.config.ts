@@ -4,17 +4,25 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    // Unit tests — no DB required
     include: [
+      "tests/**/*.test.ts",
       "src/lib/**/*.test.ts",
       "src/services/**/*.test.ts",
       "src/schemas/**/*.test.ts",
       "src/middleware/**/*.test.ts",
     ],
-    // Integration tests (require a running DB) live in src/**/*.integration.test.ts
-    // and are excluded here — run them with: vitest run --include 'src/**/*.integration.test.ts'
-    exclude: ["src/**/*.integration.test.ts", "src/eval/**"],
+    exclude: ["src/eval/**"],
     setupFiles: ["src/test/setup.ts"],
+    // vmThreads: single-process V8 VM contexts — works with ESM + Node 24 on Windows
+    pool: "vmThreads",
+    poolOptions: {
+      vmThreads: {
+        // Use a single VM context so Prisma's native engine initialises once
+        useAtomics: false,
+      },
+    },
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],

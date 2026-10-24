@@ -9,7 +9,6 @@ import {
   notFound,
   duplicateApplication,
   validationError,
-  conflictError,
   zodToFieldErrors,
 } from "./error.middleware.js";
 import { ZodError } from "zod";
@@ -17,10 +16,9 @@ import { createLeadSchema } from "../schemas/validation.js";
 
 describe("AppError", () => {
   it("produces correct status code for each code", () => {
-    expect(new AppError("VALIDATION_ERROR", "x").statusCode).toBe(422);
+    expect(new AppError("VALIDATION_ERROR", "x").statusCode).toBe(400);
     expect(new AppError("NOT_FOUND", "x").statusCode).toBe(404);
     expect(new AppError("DUPLICATE_APPLICATION", "x").statusCode).toBe(409);
-    expect(new AppError("CONFLICT", "x").statusCode).toBe(409);
     expect(new AppError("INTERNAL_ERROR", "x").statusCode).toBe(500);
   });
 
@@ -58,14 +56,6 @@ describe("duplicateApplication()", () => {
     expect(resp.error.applicationId).toBe("GL-1042");
     expect(resp.error.appliedAt).toBe("2026-10-01T10:00:00.000Z");
     expect(err.statusCode).toBe(409);
-  });
-});
-
-describe("conflictError()", () => {
-  it("returns 409 CONFLICT", () => {
-    const err = conflictError("Cannot transition from APPROVED to SUBMITTED.");
-    expect(err.statusCode).toBe(409);
-    expect(err.code).toBe("CONFLICT");
   });
 });
 

@@ -1,9 +1,6 @@
-version: "3.9"
-
 services:
-  postgres:
+  db:
     image: postgres:16-alpine
-    container_name: tglobal-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -14,10 +11,44 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d tglobal_gold_loan"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/tglobal_gold_loan?schema=public
+      PORT: 4000
+      GOLD_RATE_24K_PAISE: ${GOLD_RATE_24K_PAISE:-700000}
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-60000}
+      LEADS_RATE_LIMIT_MAX: ${LEADS_RATE_LIMIT_MAX:-10}
+      AGENT_CHAT_RATE_LIMIT_MAX: ${AGENT_CHAT_RATE_LIMIT_MAX:-30}
+      CORS_ORIGIN: http://localhost:5173
+    ports:
+      - "4000:4000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    depends_on:
+      - api
 
 volumes:
   postgres_data:

@@ -1,12 +1,14 @@
 /**
  * apps/api/src/test/setup.ts
- * Global Vitest setup — runs before every test file.
  *
- * Only sets env variables. Does NOT import any module that touches
- * the database, Prisma client, or network.
+ * Vitest setupFiles — runs once per worker before any test file.
+ * Sets required environment variables only.
+ *
+ * NOTE: Do NOT call afterAll/beforeAll here — setupFiles does not support
+ * lifecycle hooks in Vitest 2.x. Prisma disconnect is handled in the
+ * individual test files via afterAll in helpers/app.ts.
  */
 
-// Set required env vars for tests that don't need a real DB
 process.env["NODE_ENV"] = "test";
 process.env["GOLD_RATE_24K_PAISE"] ??= "700000";
 process.env["DATABASE_URL"] ??=

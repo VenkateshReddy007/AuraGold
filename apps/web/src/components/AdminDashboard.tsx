@@ -1,143 +1,51 @@
-/**
- * AdminDashboard.tsx
- * Read-only leads list for the admin view.
- */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertCircle, ArrowDownUp, ClipboardList, Filter, Loader2, RefreshCw, Search, ShieldCheck, Users, X, Clock3 } from "lucide-react";
 
-import { useState, useEffect } from "react";
-import { RefreshCw, Loader2 } from "lucide-react";
-
-interface Lead {
-  applicationId: string;
-  fullName: string;
-  mobileNumber: string;
-  karat: number;
-  netWeightGrams: string;
-  eligibleLoanPaise: string;
-  status: string;
-  source: string;
-  createdAt: string;
-  plan?: { name: string };
-}
-
-const STATUS_COLORS: Record<string, string> = {
-  SUBMITTED:    "bg-blue-100 text-blue-700",
-  UNDER_REVIEW: "bg-yellow-100 text-yellow-700",
-  APPROVED:     "bg-green-100 text-green-700",
-  REJECTED:     "bg-red-100 text-red-700",
-};
-
-function paiseToRupees(paise: string): string {
-  const num = BigInt(paise);
-  const r = num / 100n;
-  return `₹${r.toLocaleString("en-IN")}`;
-}
+type Lead = { id?: string; applicationId: string; fullName: string; mobileNumber: string; karat: number; grossWeightGrams: string; netWeightGrams: string; pureGoldGrams?: string; goldValue?: number; goldValuePaise?: string; eligibleLoanPaise: string; eligibleLoan?: number; status: string; source: string; createdAt: string; plan?: { name: string; id?: string } | string };
+type Audit = { id: string; fromStatus?: string | null; toStatus: string; actor: string; note: string; createdAt: string };
+const statuses = ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED"];
+const statusStyles: Record<string, string> = { SUBMITTED: "bg-sky-50 text-sky-700 ring-sky-200", UNDER_REVIEW: "bg-amber-50 text-amber-800 ring-amber-200", APPROVED: "bg-emerald-50 text-emerald-700 ring-emerald-200", REJECTED: "bg-rose-50 text-rose-700 ring-rose-200" };
+const rupees = (amount: number) => `₹${Math.floor(amount || 0).toLocaleString("en-IN")}`;
+const loanValue = (lead: Lead) => lead.eligibleLoan ?? Number(BigInt(lead.eligibleLoanPaise || "0") / 100n);
+const goldValue = (lead: Lead) => lead.goldValue ?? Number(BigInt(lead.goldValuePaise || "0") / 100n);
+const planName = (lead: Lead) => typeof lead.plan === "object" ? lead.plan?.name ?? "—" : lead.plan ?? "—";
 
 export default function AdminDashboard() {
-  const [leads, setLeads] = useState<Lead[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [leads, setLeads] = useState<Lead[]>([]); const [query, setQuery] = useState(""); const [activeQuery, setActiveQuery] = useState("");
+  const [appliedFilters, setAppliedFilters] = useState<Record<string, unknown>>({}); const [planFilter, setPlanFilter] = useState("ALL"); const [statusFilter, setStatusFilter] = useState("ALL");
+  const [page, setPage] = useState(1); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const [selected, setSelected] = useState<Lead | null>(null);
+  const [audit, setAudit] = useState<Audit[]>([]); const [auditLoading, setAuditLoading] = useState(false); const [nextStatus, setNextStatus] = useState(""); const [note, setNote] = useState(""); const [saving, setSaving] = useState(false); const pageSize = 10;
+  const load = useCallback(async (filterQuery?: string) => {
+    setLoading(true); setError("");
+    try {
+      const response = filterQuery ? await fetch("/api/v1/agent/admin-filter", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: filterQuery }) }) : await fetch("/api/v1/leads");
+      const payload = await response.json(); if (!response.ok || !payload.success) throw new Error(payload.error?.message ?? "Could not load applications.");
+      setLeads(payload.data as Lead[]); setActiveQuery(filterQuery ?? ""); setAppliedFilters((payload.filters ?? {}) as Record<string, unknown>); setPage(1);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not load applications."); }
+    finally { setLoading(false); }
+  }, []);
+  const openLead = async (lead: Lead) => { setSelected(lead); setAudit([]); setNextStatus(""); setNote(""); setAuditLoading(true); try { const response = await fetch(`/api/v1/leads/${encodeURIComponent(lead.applicationId)}/audit-logs`); const payload = await response.json(); if (response.ok && payload.success) setAudit(payload.data as Audit[]); } finally { setAuditLoading(false); } };
+  const refreshAudit = async (id: string) => { const r = await fetch(`/api/v1/leads/${encodeURIComponent(id)}/audit-logs`); const p = await r.json(); if (r.ok && p.success) setAudit(p.data as Audit[]); };
+  const saveStatus = async () => { if (!selected || !nextStatus) return; setSaving(true); setError(""); try { const r = await fetch(`/api/v1/leads/${encodeURIComponent(selected.applicationId)}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: nextStatus, note: note.trim() || undefined, actor: "ADMIN" }) }); const p = await r.json(); if (!r.ok || !p.success) throw new Error(p.error?.message ?? p.error?.fields?.[0]?.message ?? "Could not update status."); setSelected(p.data); setNextStatus(""); setNote(""); await Promise.all([load(activeQuery || undefined), refreshAudit(selected.applicationId)]); } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update status."); } finally { setSaving(false); } };
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { const handler = (event: Event) => { const id = (event as CustomEvent<string>).detail; setActiveQuery(""); void load().then(() => { if (id) setTimeout(() => document.getElementById(`lead-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 100); }); }; window.addEventListener("aura:open-admin", handler); return () => window.removeEventListener("aura:open-admin", handler); }, [load]);
+  const filtered = useMemo(() => leads.filter((lead) => (planFilter === "ALL" || (typeof lead.plan === "object" ? lead.plan?.id : lead.plan) === planFilter) && (statusFilter === "ALL" || lead.status === statusFilter)), [leads, planFilter, statusFilter]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize)); const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const counts = useMemo(() => ({ total: leads.length, review: leads.filter((x) => x.status === "UNDER_REVIEW").length, submitted: leads.filter((x) => x.status === "SUBMITTED").length }), [leads]);
+  const submitFilter = (event: React.FormEvent) => { event.preventDefault(); void load(query.trim() || undefined); };
+  const filterLabels = Object.entries(appliedFilters).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}: ${String(value)}`);
 
-  const fetchLeads = () => {
-    setLoading(true);
-    setError(null);
-    fetch("/api/v1/leads")
-      .then((r) => r.json())
-      .then((body) => {
-        if (body.success) setLeads(body.data);
-        else setError(body.error ?? "Failed to load leads.");
-      })
-      .catch(() => setError("Cannot reach API. Is the server running?"))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { fetchLeads(); }, []);
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-800">Applications</h2>
-          <p className="text-gray-500 text-sm">{leads.length} total</p>
-        </div>
-        <button
-          onClick={fetchLeads}
-          className="btn-secondary flex items-center gap-2"
-          disabled={loading}
-        >
-          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-          Refresh
-        </button>
-      </div>
-
-      {loading && (
-        <div className="flex items-center justify-center h-40 text-gray-400">
-          <Loader2 size={28} className="animate-spin mr-2" /> Loading…
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 text-sm">
-          {error}
-        </div>
-      )}
-
-      {!loading && !error && leads.length === 0 && (
-        <div className="text-center text-gray-400 py-16">No applications yet.</div>
-      )}
-
-      {!loading && leads.length > 0 && (
-        <div className="card overflow-hidden p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-100">
-                <tr>
-                  {["App ID", "Name", "Mobile", "Gold", "Plan", "Eligible Loan", "Status", "Source", "Date"].map(
-                    (h) => (
-                      <th
-                        key={h}
-                        className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wide px-4 py-3"
-                      >
-                        {h}
-                      </th>
-                    )
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {leads.map((lead) => (
-                  <tr key={lead.applicationId} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 font-mono font-medium text-brand">
-                      {lead.applicationId}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-gray-800">{lead.fullName}</td>
-                    <td className="px-4 py-3 text-gray-600">{lead.mobileNumber}</td>
-                    <td className="px-4 py-3 text-gray-600">
-                      {lead.netWeightGrams}g / {lead.karat}k
-                    </td>
-                    <td className="px-4 py-3 text-gray-600">{lead.plan?.name ?? lead.plan}</td>
-                    <td className="px-4 py-3 font-medium text-gray-800">
-                      {paiseToRupees(lead.eligibleLoanPaise)}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
-                          STATUS_COLORS[lead.status] ?? "bg-gray-100 text-gray-700"
-                        }`}
-                      >
-                        {lead.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{lead.source}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">
-                      {new Date(lead.createdAt).toLocaleDateString("en-IN")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  return <div>
+    <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="mb-2 inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-600"><ShieldCheck size={13} /> Operations workspace</div><h2 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">Applications &amp; Ops</h2><p className="mt-1.5 text-sm text-slate-500">Monitor borrower intake and find applications with plain-English filters.</p></div><button onClick={() => void load(activeQuery || undefined)} className="inline-flex min-h-10 items-center justify-center gap-2 self-start rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 sm:self-auto"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh</button></div>
+    <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3"><StatCard label="Applications shown" value={counts.total.toLocaleString("en-IN")} icon={<Users size={18} />} /><StatCard label="Under review" value={counts.review.toLocaleString("en-IN")} icon={<ClipboardList size={18} />} /><StatCard label="New submissions" value={counts.submitted.toLocaleString("en-IN")} icon={<Filter size={18} />} /></div>
+    <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"><div className="mb-3 flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-amber-700"><Search size={16} /></span><div><h3 className="text-sm font-bold text-slate-900">Safe plain-English filter</h3><p className="text-[11px] text-slate-500">Search translates into validated filters; no raw SQL is run.</p></div></div><form onSubmit={submitFilter} className="flex flex-col gap-2 sm:flex-row"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Show 22K Monthly EMI leads above ₹1,50,000" className="min-h-11 min-w-0 flex-1 rounded-xl border border-slate-200 px-3.5 text-sm outline-none focus:border-amber-400" /><button className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#0F172A] px-4 text-xs font-bold text-white"><Search size={14} /> Apply filter</button></form><div className="mt-3 flex flex-wrap items-center gap-2"><span className="text-[10px] font-semibold text-slate-400">Quick filters</span>{["Under review", "22K EMI leads", "Submitted above 1 lakh"].map((quick) => <button key={quick} onClick={() => { setQuery(quick); void load(quick); }} className="min-h-7 rounded-full border border-slate-200 px-2.5 text-[10px] font-semibold text-slate-600 hover:border-amber-300">{quick}</button>)}{activeQuery && <button onClick={() => { setQuery(""); void load(); }} className="ml-auto text-[10px] font-bold text-amber-700">Clear filter</button>}</div>{filterLabels.length > 0 && <div className="mt-3 flex flex-wrap gap-1.5"><span className="mr-1 self-center text-[10px] text-slate-400">Safe filters applied</span>{filterLabels.map((label) => <span key={label} className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">{label}</span>)}</div>}</div>
+    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"><div><h3 className="text-sm font-bold text-slate-900">Lead register</h3><p className="mt-0.5 text-[11px] text-slate-500">Newest applications first · mobile numbers masked</p></div><div className="flex flex-wrap items-center gap-2"><select aria-label="Filter by plan" value={planFilter} onChange={(e) => { setPlanFilter(e.target.value); setPage(1); }} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-[11px]"><option value="ALL">All plans</option><option value="PLAN_EMI_01">Monthly EMI</option><option value="PLAN_BULLET_01">Bullet Repayment</option></select><select aria-label="Filter by status" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} className="h-9 rounded-lg border border-slate-200 bg-white px-2 text-[11px]"><option value="ALL">All statuses</option>{statuses.map((s) => <option key={s}>{s}</option>)}</select><span className="inline-flex items-center gap-1 rounded-lg bg-slate-50 px-2 py-2 text-[10px] text-slate-500"><ArrowDownUp size={12} /> Newest</span></div></div>
+      {activeQuery && <div className="border-b border-amber-100 bg-amber-50/70 px-4 py-2.5 text-xs text-amber-900">Showing results for: “{activeQuery}”</div>}{error && <div className="m-4 flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><AlertCircle size={15} />{error}</div>}
+      {loading ? <div className="flex min-h-48 items-center justify-center gap-2 text-sm text-slate-500"><Loader2 size={17} className="animate-spin text-amber-600" /> Loading applications…</div> : visible.length === 0 ? <div className="flex min-h-48 flex-col items-center justify-center px-4 text-center"><ClipboardList size={22} className="text-slate-400" /><p className="mt-3 text-sm font-semibold text-slate-700">No applications match</p></div> : <div className="overflow-x-auto"><table className="w-full min-w-[1320px] text-left"><thead className="bg-slate-50 text-[10px] font-bold uppercase tracking-wider text-slate-500"><tr>{["Application ID","Applicant Name","Masked Mobile","Weights & Purity","Pure Gold & Value","Plan","Eligible Loan","Source","Status","Created At"].map((x) => <th key={x} className="px-4 py-3">{x}</th>)}</tr></thead><tbody className="divide-y divide-slate-100">{visible.map((lead) => <tr id={`lead-${lead.applicationId}`} key={lead.applicationId} onClick={() => void openLead(lead)} className="cursor-pointer transition hover:bg-amber-50/40"><td className="px-4 py-4 text-xs font-bold text-slate-900">{lead.applicationId}</td><td className="px-4 py-4 text-xs font-semibold text-slate-800">{lead.fullName}</td><td className="px-4 py-4 font-mono text-xs text-slate-600">{lead.mobileNumber}</td><td className="px-4 py-4 text-xs text-slate-700">{lead.netWeightGrams}g net / {lead.grossWeightGrams}g gross · {lead.karat}K</td><td className="px-4 py-4 text-xs text-slate-700">{lead.pureGoldGrams ?? "—"}g · {rupees(goldValue(lead))}</td><td className="px-4 py-4 text-xs text-slate-700">{planName(lead)}</td><td className="px-4 py-4 text-xs font-bold text-slate-950">{rupees(loanValue(lead))}</td><td className="px-4 py-4"><span className={`rounded-full px-2 py-1 text-[9px] font-bold ${lead.source === "AI_AGENT" ? "bg-violet-50 text-violet-700" : "bg-slate-100 text-slate-600"}`}>{lead.source}</span></td><td className="px-4 py-4"><Status status={lead.status} /></td><td className="whitespace-nowrap px-4 py-4 text-xs text-slate-500">{new Date(lead.createdAt).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td></tr>)}</tbody></table></div>}
+      <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3"><span className="text-[10px] text-slate-500">{filtered.length ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filtered.length)} of ${filtered.length}` : "0 results"}</span><div className="flex gap-2"><button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[10px] font-semibold disabled:opacity-40">Previous</button><span className="self-center text-[10px] text-slate-500">Page {page} / {pageCount}</span><button disabled={page >= pageCount} onClick={() => setPage((p) => p + 1)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[10px] font-semibold disabled:opacity-40">Next</button></div></div>
+    </section>
+    {selected && <div className="fixed inset-0 z-50 bg-slate-950/40" onClick={() => setSelected(null)}><aside onClick={(e) => e.stopPropagation()} className="absolute inset-y-0 right-0 flex w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl"><div className="flex items-start justify-between border-b border-slate-100 p-5"><div><p className="text-[10px] font-bold uppercase tracking-widest text-amber-700">Audit &amp; status</p><h3 className="mt-1 text-lg font-bold text-slate-900">{selected.applicationId}</h3><p className="mt-1 text-xs text-slate-500">{selected.fullName} · {selected.mobileNumber}</p></div><button aria-label="Close audit drawer" onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100"><X size={18} /></button></div><div className="space-y-5 p-5"><div className="rounded-xl bg-slate-50 p-4 text-xs"><div className="flex items-center justify-between"><b>Current status</b><Status status={selected.status} /></div><p className="mt-2 text-slate-600">{selected.netWeightGrams}g net / {selected.grossWeightGrams}g gross · {selected.karat}K</p><p className="mt-1 text-slate-600">{planName(selected)} · Eligible {rupees(loanValue(selected))}</p></div><div><h4 className="mb-2 text-sm font-bold text-slate-900">Advance status</h4><div className="space-y-2"><select value={nextStatus} onChange={(e) => setNextStatus(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-xs"><option value="">Select next status</option>{(selected.status === "SUBMITTED" ? ["UNDER_REVIEW", "REJECTED"] : selected.status === "UNDER_REVIEW" ? ["APPROVED", "REJECTED"] : []).map((s) => <option key={s}>{s}</option>)}</select><textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Audit note (optional)" rows={2} className="w-full rounded-lg border border-slate-200 p-3 text-xs" /><button disabled={!nextStatus || saving} onClick={() => void saveStatus()} className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 text-xs font-bold text-white disabled:opacity-50">{saving && <Loader2 size={14} className="animate-spin" />}Update status &amp; add audit note</button></div></div><div><div className="mb-3 flex items-center gap-2"><Clock3 size={15} className="text-amber-700" /><h4 className="text-sm font-bold text-slate-900">Audit timeline</h4></div>{auditLoading ? <p className="text-xs text-slate-500">Loading audit history…</p> : audit.length ? <ol className="space-y-3 border-l border-slate-200 pl-4">{audit.map((item) => <li key={item.id} className="relative"><span className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full bg-amber-500 ring-4 ring-amber-50" /><p className="text-xs font-bold text-slate-800">{item.fromStatus ? `${item.fromStatus} → ` : ""}{item.toStatus}</p><p className="mt-0.5 text-[10px] text-slate-500">{item.actor} · {new Date(item.createdAt).toLocaleString("en-IN")}</p><p className="mt-1 text-xs text-slate-600">{item.note}</p></li>)}</ol> : <p className="text-xs text-slate-500">No audit events recorded.</p>}</div></div></aside></div>}
+  </div>;
 }
+function Status({ status }: { status: string }) { return <span className={`rounded-full px-2.5 py-1 text-[9px] font-bold ring-1 ring-inset ${statusStyles[status] ?? "bg-slate-50 text-slate-700 ring-slate-200"}`}>{status.replace("_", " ")}</span>; }
+function StatCard({ label, value, icon }: { label: string; value: string; icon: React.ReactNode }) { return <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50 text-amber-700">{icon}</span><div><p className="text-xl font-bold text-slate-900">{value}</p><p className="text-[10px] font-semibold text-slate-500">{label}</p></div></div>; }

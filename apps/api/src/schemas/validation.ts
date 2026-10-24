@@ -52,6 +52,19 @@ export const planIdSchema = z
   .string({ required_error: "Plan ID is required" })
   .min(1, { message: "Plan ID cannot be empty" });
 
+/** Shared payload contract for REST quotes and the agent quote tool. */
+export const quoteInputSchema = z
+  .object({
+    grossWeightGrams: grossWeightGramsSchema,
+    netWeightGrams: netWeightGramsSchema,
+    karat: karatSchema,
+    planId: planIdSchema.optional(),
+  })
+  .refine((data) => data.netWeightGrams <= data.grossWeightGrams, {
+    message: "Net weight cannot exceed gross weight",
+    path: ["netWeightGrams"],
+  });
+
 // ── Composite create-lead schema ──────────────────────────────────────────────
 
 /**
@@ -59,8 +72,7 @@ export const planIdSchema = z
  * The net > gross refinement attaches the error to `netWeightGrams`
  * so the error contract field path is correct.
  */
-export const createLeadSchema = z
-  .object({
+export const leadFieldsSchema = z.object({
     fullName: fullNameSchema,
     mobileNumber: mobileNumberSchema,
     grossWeightGrams: grossWeightGramsSchema,
@@ -69,8 +81,9 @@ export const createLeadSchema = z
     planId: planIdSchema,
     source: z.enum(["WEB_FORM", "AI_AGENT"]).default("WEB_FORM"),
     idempotencyKey: z.string().uuid({ message: "Idempotency key must be a valid UUID" }).optional(),
-  })
-  .refine((data) => data.netWeightGrams <= data.grossWeightGrams, {
+  });
+
+export const createLeadSchema = leadFieldsSchema.refine((data) => data.netWeightGrams <= data.grossWeightGrams, {
     message: "Net weight cannot exceed gross weight",
     path: ["netWeightGrams"],
   });
@@ -133,3 +146,4 @@ export type CreateLeadInput = z.infer<typeof createLeadSchema>;
 export type UpdateLeadStatusInput = z.infer<typeof updateLeadStatusSchema>;
 export type AgentSubmitLeadInput = z.infer<typeof agentSubmitLeadSchema>;
 export type AgentCalculateLoanInput = z.infer<typeof agentCalculateLoanSchema>;
+export type QuoteInput = z.infer<typeof quoteInputSchema>;

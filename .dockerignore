@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+**/dist
+**/coverage
+.git
+.env
+.env.*
+apps/api/test-out.json
+apps/api/test-results.json
