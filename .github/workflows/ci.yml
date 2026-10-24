@@ -35,6 +35,7 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
+      - run: npx prisma generate --schema apps/api/prisma/schema.prisma
       - run: npx prisma migrate deploy --schema apps/api/prisma/schema.prisma
       - run: npm run db:seed
       - run: npm test
