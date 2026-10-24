@@ -1,13 +1,13 @@
-# AuraGold by TGlobal
+# AuraGold
 
-![CI](https://github.com/VenkateshReddy007/TGlobal/actions/workflows/ci.yml/badge.svg) ![Node.js 20](https://img.shields.io/badge/Node.js-20-339933?logo=node.js) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript)
+![CI](https://github.com/VenkateshReddy007/AuraGold/actions/workflows/ci.yml/badge.svg) ![Node.js 20](https://img.shields.io/badge/Node.js-20-339933?logo=node.js) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript)
 
 > **A gold-loan intake portal where the form and AI assistant share one source of truth.**
 > React + TypeScript · Express · PostgreSQL · Prisma · Zod · Tool-calling AI
 
 AuraGold gives a borrower or field agent two ways to prepare a gold-loan application: a guided three-step portal or a conversational assistant. Both use the same server-validated quote and lead services. The model can request tools; it cannot set the rate, invent a plan, do the maths, or submit without a clear confirmation.
 
-**Repository:** [VenkateshReddy007/TGlobal](https://github.com/VenkateshReddy007/TGlobal)
+**Repository:** [VenkateshReddy007/AuraGold](https://github.com/VenkateshReddy007/AuraGold)
 
 ## Start here
 
@@ -136,7 +136,7 @@ Copy the root `.env.example` to `.env`. API values can also be set in `apps/api/
 
 | Variable | Example/default | Description |
 |---|---|---|
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/tglobal_gold_loan?schema=public` | PostgreSQL connection used by Prisma |
+| `DATABASE_URL` | See root `.env.example` | PostgreSQL connection used by Prisma |
 | `PORT` | `4000` | API port |
 | `GOLD_RATE_24K_PAISE` | `700000` | ₹7,000.00 per gram as paise per gram |
 | `LLM_PROVIDER` | `gemini` (or `mock`) | Provider adapter: `gemini`, `groq`, `ollama`, or `mock` |
