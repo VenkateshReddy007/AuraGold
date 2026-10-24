@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://i.ibb.co/p6jh4bR2/Aura-Gold-Lightbulb-Wordmark.png" alt="AuraGold logo" width="240" />
+</p>
+
 # AuraGold
 
 > **A gold-loan intake portal where the form and AI assistant share one source of truth.**
