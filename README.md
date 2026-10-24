@@ -7,7 +7,7 @@
 
 AuraGold gives a borrower or field agent two ways to prepare a gold-loan application: a guided three-step portal or a conversational assistant. Both use the same server-validated quote and lead services. The model can request tools; it cannot set the rate, invent a plan, do the maths, or submit without a clear confirmation.
 
-**Assignment:** Full-Stack Developer Intern take-home · **Repository:** [VenkateshReddy007/TGlobal](https://github.com/VenkateshReddy007/TGlobal)
+**Repository:** [VenkateshReddy007/TGlobal](https://github.com/VenkateshReddy007/TGlobal)
 
 ## Start here
 
@@ -100,19 +100,17 @@ For a pending application, the assistant keeps the quote summary in session stat
 - **Safe admin language filters.** Plain English is converted into a small Zod-validated filter object and Prisma query. The application never executes generated SQL.
 - **Useful without live credentials.** Seeded data, selectable appraisal-slip presets, mock mode, Docker and CI make the full journey straightforward to run and review.
 
-## Features and assignment coverage
+## Platform capabilities
 
 | Area | Delivered |
 |---|---|
-| Required Part A — API | Active loan schemes, pure quote endpoint, lead submit/list/detail, shared validation and consistent error envelope |
-| Required Part A — exact maths | Integer paise, rational purity arithmetic, whole-rupee display floor, server-enforced 75% maximum LTV |
-| Required Part A — web | Mobile-first three-step intake, 300 ms quote debounce, plan cards, field-level errors, conflict and receipt states |
-| Required Part A — admin | Newest-first table, masked mobiles, plan/status filters, pagination, status workflow and audit timeline |
-| Required Part B — agent | Shared-tool quote and submission flow, missing-field recovery, explicit UI confirmation, off-topic/investment refusal |
-| Bonus B1 — backend hardening | Idempotency response replay, concurrent duplicate serialization, status audit log, cached gold-rate endpoint |
-| Bonus B2 — smarter agent | Fourth tool `check_existing_application`, injection defenses, Hinglish, tool traces/status events, confirmation-bound session state |
-| Bonus B3 — AI extras | Gemini appraisal-slip extraction with sample/OCR fallbacks, safe natural-language lead filter |
-| Bonus B4 — ops-ready | Configurable route limits, Helmet, CORS, Docker Compose, PostgreSQL GitHub Actions CI, architecture documentation |
+| API and business rules | Active loan schemes, pure quote endpoint, lead submit/list/detail, shared validation, and consistent error envelope |
+| Exact financial calculations | Integer paise, rational purity arithmetic, whole-rupee display floor, server-enforced 75% maximum LTV |
+| Borrower experience | Mobile-first three-step intake, 300 ms quote debounce, plan cards, field-level errors, conflict and receipt states |
+| AI Loan Assist | Shared-tool quoting and submission, missing-field recovery, explicit UI confirmation, English/Hinglish, topic and injection guardrails |
+| Application integrity | Idempotency replay, concurrent duplicate protection, status transitions, audit trail, and cached gold-rate endpoint |
+| Appraisal and operations | Slip vision/OCR fallback, safe plain-English lead filters, paginated table, status and audit drawer |
+| Deployment and security | Rate limiting, Helmet/CORS, Docker Compose, PostgreSQL GitHub Actions CI |
 
 ## API map
 
@@ -152,7 +150,7 @@ Copy the root `.env.example` to `.env`. API values can also be set in `apps/api/
 
 ## Verification
 
-The math and API suite covers the assignment's cases 1–8. Monetary examples use the seeded 24K rate of ₹7,000 per gram.
+The math and API suite covers the core financial and API regression cases. Monetary examples use the seeded 24K rate of ₹7,000 per gram.
 
 | Case | Assertion |
 |---|---|
