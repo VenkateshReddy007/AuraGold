@@ -1,7 +1,5 @@
 # AuraGold
 
-![CI](https://github.com/VenkateshReddy007/AuraGold/actions/workflows/ci.yml/badge.svg) ![Node.js 20](https://img.shields.io/badge/Node.js-20-339933?logo=node.js) ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript)
-
 > **A gold-loan intake portal where the form and AI assistant share one source of truth.**
 > React + TypeScript · Express · PostgreSQL · Prisma · Zod · Tool-calling AI
 
